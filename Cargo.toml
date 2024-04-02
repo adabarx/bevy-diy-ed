@@ -6,3 +6,17 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+anyhow = "1.0.81"
+bevy = "0.13.1"
+bevy_text = "0.13.1"
+clap = { version = "4.5.4", features = ["derive"] }
+iyes_perf_ui = "0.2.3"
+
+# Enable max optimizations for dependencies, but not for our code:
+[profile.dev]
+opt-level = 1
+
+# Enable max optimizations for dependencies, but not for our code:
+[profile.dev.package."*"]
+opt-level = 3
+
