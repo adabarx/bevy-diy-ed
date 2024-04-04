@@ -38,6 +38,9 @@ pub struct Line;
 #[derive(Component, Reflect)]
 pub struct Span;
 
+#[derive(Component, Reflect)]
+pub struct Character;
+
 #[derive(Component, Default, Deref, DerefMut, Reflect)]
 pub struct ScrollPosition(f32);
 
@@ -79,7 +82,7 @@ fn setup(mut commands: Commands, _asset_server: Res<AssetServer>) {
             },
             ScrollPosition::default(),
         )).with_children(|parent| {
-            for (i, line_str) in content.split_inclusive('\n').enumerate() {
+            for (i, line_str) in content.split('\n').enumerate() {
                 parent.spawn((
                     LineNumber(i + 1),
                     Line,
@@ -91,11 +94,43 @@ fn setup(mut commands: Commands, _asset_server: Res<AssetServer>) {
                         ..Default::default()
                     }
                 )).with_children(|parent| {
+                    let mut empty = true;
                     for span_str in line_str.split_inclusive(' ') {
+                        empty = false;
                         parent.spawn((
                             Span,
-                            TextBundle::from_section(span_str, Default::default())
-                        ));
+                            NodeBundle {
+                                style: Style {
+                                    flex_direction: FlexDirection::Row,
+                                    ..Default::default()
+                                },
+                                ..Default::default()
+                            }
+                        )).with_children(|parent| {
+                            for ch in span_str.chars() {
+                                parent.spawn((
+                                    Character,
+                                    TextBundle::from_section(ch, Default::default())
+                                ));
+                            }
+                        });
+                    }
+                    if empty {
+                        parent.spawn((
+                            Span,
+                            NodeBundle {
+                                style: Style {
+                                    flex_direction: FlexDirection::Row,
+                                    ..Default::default()
+                                },
+                                ..Default::default()
+                            }
+                        )).with_children(|parent| {
+                            parent.spawn((
+                                Character,
+                                TextBundle::from_section(" ", Default::default())
+                            ));
+                        });
                     }
                 });
             }
