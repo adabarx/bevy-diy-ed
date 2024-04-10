@@ -20,6 +20,7 @@ struct CLI { path: Option<PathBuf> }
 pub enum SplitDir {
     #[default]
     Vertical,
+    #[allow(dead_code)]
     Horizontal
 }
 

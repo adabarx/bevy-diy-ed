@@ -1,7 +1,7 @@
 use std::{cmp::min, collections::VecDeque};
 
 use bevy::{
-    ecs::system::SystemState, prelude::*, winit::WinitSettings
+    ecs::system::SystemState, prelude::*, reflect::List, winit::WinitSettings
 };
 use iyes_perf_ui::{PerfUiCompleteBundle, PerfUiPlugin};
 
@@ -39,15 +39,19 @@ fn main() {
         .insert_resource(WinitSettings::desktop_app())
         .add_systems(Startup, (setup, setup_root_zipper).chain())
         .add_systems(Update, (
-            control.before(move_char),
-            move_char.before(move_zipper_world),
+            control,
+            (move_char_left_right, move_char_up_down)
+                .before(goto_char)
+                .after(control),
             highlight_border,
             dehighlight_border,
             which_zipper,
             despawn_zipper,
-            move_zipper_world,
+            move_zipper,
+            goto_char.before(move_zipper),
         ))
         .add_event::<MoveInstruction>()
+        .add_event::<GoToChar>()
         .add_event::<MoveChar>()
         .add_event::<DespawnZipper>()
         .init_state::<AppState>()
@@ -67,12 +71,12 @@ pub enum MoveInstruction {
     Child(usize),
 }
 
-#[derive(Event)]
+#[derive(Event, PartialEq, Eq)]
 pub enum MoveChar {
     Right,
     Left,
-    // LineUp,
-    // LineDown,
+    LineUp,
+    LineDown,
 }
 
 #[derive(Component, Reflect)]
@@ -117,6 +121,8 @@ fn control(
         match char.char.as_str() {
             "h" if *zip_type == Character => { char_movement_evw.send(MoveChar::Left); },
             "l" if *zip_type == Character => { char_movement_evw.send(MoveChar::Right); },
+            "j" if *zip_type == Character => { char_movement_evw.send(MoveChar::LineDown); },
+            "k" if *zip_type == Character => { char_movement_evw.send(MoveChar::LineUp); },
             "h" => { zipper_movement_evw.send(MoveInstruction::Left); },
             "l" => { zipper_movement_evw.send(MoveInstruction::Right); },
             "j" => { zipper_movement_evw.send(MoveInstruction::Child(0)); },
@@ -131,20 +137,22 @@ fn control(
     }
 }
 
-fn move_char(
+fn move_char_left_right(
     mut move_char_evr: EventReader<MoveChar>,
     mut move_zipp_evw: EventWriter<MoveInstruction>,
-    curr_zipp_q: Query<(&ZipperType, &ZipperSiblings), With<CurrentZipper>>,
+    curr_zipp_q: Query<(&Parent, &ZipperType, &ZipperSiblings), With<CurrentZipper>>,
+    zippers_q: Query<&ZipperSiblings>,
 ) {
     for movement in move_char_evr.read() {
-        let (zip_type, siblings) = curr_zipp_q.single();
+        if *movement == MoveChar::LineUp || *movement == MoveChar::LineDown { return }
+        let (zip_parent, zip_type, siblings) = curr_zipp_q.single();
         if *zip_type != ZipperType::Character { return }
+        let par_sibs = zippers_q.get(**zip_parent).unwrap();
         match movement {
             MoveChar::Left => {
                 if siblings.left.len() > 0 {
-                    // move to left sibling if able
                     move_zipp_evw.send(MoveInstruction::Left);
-                } else {
+                } else if par_sibs.left.len() > 0 {
                     move_zipp_evw.send(MoveInstruction::Parent);
                     move_zipp_evw.send(MoveInstruction::Left);
                     move_zipp_evw.send(MoveInstruction::Child(usize::MAX));
@@ -153,25 +161,105 @@ fn move_char(
             MoveChar::Right => {
                 if siblings.right.len() > 0 {
                     move_zipp_evw.send(MoveInstruction::Right);
-                } else {
+                } else if par_sibs.right.len() > 0 {
                     move_zipp_evw.send(MoveInstruction::Parent);
                     move_zipp_evw.send(MoveInstruction::Right);
                     move_zipp_evw.send(MoveInstruction::Child(0));
                 }
             },
-            // MoveChar::LineUp => (),
-            // MoveChar::LineDown => (),
+            _ => (),
         }
     }
 }
 
-fn move_zipper_world(
+fn move_char_up_down (
+    mut move_char_evr: EventReader<MoveChar>,
+    mut move_zipp_evw: EventWriter<MoveInstruction>,
+    mut move_line_evr: EventWriter<GoToChar>,
+    main_q: Query<&Children, Or<(With<Line>, With<Span>)>>,
+    zippers_q: Query<(&Parent, &ZipperSiblings)>,
+    curr_zipp_q: Query<(&Parent, &ZipperType, &ZipperSiblings), With<CurrentZipper>>,
+) {
+    for movement in move_char_evr.read() {
+        if *movement == MoveChar::Left || *movement == MoveChar::Right { return }
+        let (parent, zip_type, siblings) = curr_zipp_q.single();
+        if *zip_type != ZipperType::Character { return }
+        let (span_zip_par, span_zip_sibs) = zippers_q.get(**parent).unwrap();
+        let mut curr_pos = span_zip_sibs.left.iter().fold(0_usize, |acc, sib| {
+            let id = sib.downcast_ref::<Entity>().unwrap();
+            let span = main_q.get(*id).unwrap();
+            acc + span.len()
+        });
+        curr_pos += siblings.left.len();
+
+        let (_, line_zip_sibs) = zippers_q.get(**span_zip_par).unwrap();
+
+        match movement {
+            MoveChar::LineUp => {
+                move_zipp_evw.send(MoveInstruction::Parent);
+                move_zipp_evw.send(MoveInstruction::Parent);
+                move_zipp_evw.send(MoveInstruction::Left);
+                move_line_evr.send(GoToChar(curr_pos, *line_zip_sibs.left.last().unwrap()));
+            },
+            MoveChar::LineDown => {
+                move_zipp_evw.send(MoveInstruction::Parent);
+                move_zipp_evw.send(MoveInstruction::Parent);
+                move_zipp_evw.send(MoveInstruction::Right);
+                move_line_evr.send(GoToChar(curr_pos, *line_zip_sibs.right.front().unwrap()));
+            },
+            _ => (),
+        }
+    }
+}
+
+#[derive(Event)]
+pub struct GoToChar(usize, Entity);
+
+fn goto_char(
+    mut char_evr: EventReader<GoToChar>,
+    mut zipper_movement_evw: EventWriter<MoveInstruction>,
+    main_q: Query<&Children, Or<(With<Line>, With<Span>)>>,
+) {
+    for GoToChar(position, line_id) in char_evr.read() {
+        let line_children = main_q.get(*line_id).unwrap();
+        let mut curr_char_pos = 0_usize;
+        let mut span_count = 0_usize;
+        for span_id in line_children.iter() {
+            let span_children = main_q.get(*span_id).unwrap();
+            if curr_char_pos + span_children.len() > *position {
+                zipper_movement_evw.send(MoveInstruction::Child(span_count));
+                let mut char_count = 0_usize;
+                for _ in span_children.iter() {
+                    if curr_char_pos + char_count == *position {
+                        zipper_movement_evw.send(MoveInstruction::Child(char_count));
+                        return;
+                    }
+                    char_count += 1;
+                }
+                zipper_movement_evw.send(MoveInstruction::Child(usize::MAX));
+                return;
+            }
+            curr_char_pos += span_children.len();
+            span_count += 1;
+        }
+        zipper_movement_evw.send(MoveInstruction::Child(usize::MAX));
+        zipper_movement_evw.send(MoveInstruction::Child(usize::MAX));
+    }
+}
+
+fn move_zipper(
     world: &mut World,
     mut state: Local<SystemState<(
         Commands,
         EventReader<MoveInstruction>,
         Query<
-            (Entity, &mut ZipperFocus, &ZipperType, Option<&mut ZipperSiblings>, Option<&Parent>),
+            (
+                Entity,
+                &mut ZipperFocus,
+                &ZipperType,
+                Option<&mut ZipperSiblings>,
+                Option<&Parent>
+            ),
             With<CurrentZipper>
         >,
         Query<&ZipperFocus, Without<CurrentZipper>>,
@@ -188,22 +276,21 @@ fn move_zipper_world(
 ) {
     let mut inst_events = Vec::with_capacity(3);
     let (_, mut events, _, _, _) = state.get_mut(world);
-    for i in events.read() {
-        inst_events.push(*i);
-    }
+    for i in events.read() { inst_events.push(*i) }
 
     for inst in inst_events.into_iter() {
         {
-            let (mut commands, _, mut curr_zipper_q, zippers_q, app_tree_q) = state.get_mut(world);
             let (
-                curr_id,
-                mut curr_focus,
-                _curr_zipper_type,
-                siblings,
-                parent
-            ) = curr_zipper_q.single_mut();
+                mut commands,
+                _,
+                mut curr_zipper_q,
+                zippers_q,
+                app_tree_q
+            ) = state.get_mut(world);
             match inst {
-                MoveInstruction::Left if siblings.is_some() => {
+                MoveInstruction::Left => {
+                    let (_, mut curr_focus, _, siblings, _) = curr_zipper_q.single_mut();
+                    if siblings.is_none() { return }
                     // adjust focus and siblings
                     let mut sibs = siblings.unwrap();
                     if sibs.clone().left.len() == 0 { return }
@@ -215,7 +302,9 @@ fn move_zipper_world(
 
                     commands.entity(**curr_focus).insert(CurrentFocus);
                 },
-                MoveInstruction::Right if siblings.is_some() => {
+                MoveInstruction::Right => {
+                    let (_, mut curr_focus, _, siblings, _) = curr_zipper_q.single_mut();
+                    if siblings.is_none() { return }
                     // adjust focus and siblings
                     let mut sibs = siblings.unwrap();
                     if sibs.clone().right.len() == 0 { return }
@@ -227,7 +316,9 @@ fn move_zipper_world(
 
                     commands.entity(**curr_focus).insert(CurrentFocus);
                 },
-                MoveInstruction::Parent if parent.is_some() => {
+                MoveInstruction::Parent => {
+                    let (curr_id, curr_focus, _, _, parent) = curr_zipper_q.single_mut();
+                    if parent.is_none() { return }
                     let &ZipperFocus(focus) = zippers_q.get(**parent.unwrap()).unwrap();
 
                     commands.entity(**curr_focus).remove::<CurrentFocus>();
@@ -238,20 +329,14 @@ fn move_zipper_world(
                 },
                 MoveInstruction::Child(index) => {
                     if curr_zipper_q.is_empty() { return }
-                    let (
-                        curr_zipper_id,
-                        curr_zipper_focus,
-                        curr_zipper_type,
-                        _,
-                        _,
-                    ) = curr_zipper_q.single();
+                    let (curr_id, curr_focus, curr_type, _, _,) = curr_zipper_q.single();
 
-                    match curr_zipper_type {
+                    match curr_type {
                         ZipperType::Character => return,
                         _ => (),
                     };
 
-                    let curr_zipper_children = app_tree_q.get(**curr_zipper_focus).unwrap();
+                    let curr_zipper_children = app_tree_q.get(**curr_focus).unwrap();
 
                     if curr_zipper_children.len() == 0 { return }
 
@@ -260,22 +345,20 @@ fn move_zipper_world(
                     let (new_focus, right) = right_tmp.split_at(1);
                     let new_focus = new_focus[0];
 
-                    commands.entity(curr_zipper_id).remove::<CurrentZipper>();
-                    commands.entity(**curr_zipper_focus).remove::<CurrentFocus>();
+                    commands.entity(curr_id).remove::<CurrentZipper>();
+                    commands.entity(**curr_focus).remove::<CurrentFocus>();
                     commands.entity(new_focus).insert(CurrentFocus);
                     let new_zip_id = commands.spawn((
                         CurrentZipper,
                         BranchZipperBundle::new(
-                            curr_zipper_type.child_type(),
+                            curr_type.child_type(),
                             new_focus,
                             left.into(),
                             right.to_vec().into(),
                         )
                     )).id();
-                    commands.entity(curr_zipper_id).add_child(new_zip_id);
-
+                    commands.entity(curr_id).add_child(new_zip_id);
                 },
-                _ => (),
             }
         }
         state.apply(world);
@@ -327,7 +410,7 @@ fn dehighlight_border(
     }
 }
 
-#[derive(Component, Reflect, Clone, Copy, PartialEq, Eq)]
+#[derive(Component, Reflect, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ZipperType {
     Window,
     Document,
