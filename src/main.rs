@@ -123,6 +123,7 @@ fn control(
             "l" if *zip_type == Character => { char_movement_evw.send(MoveChar::Right); },
             "j" if *zip_type == Character => { char_movement_evw.send(MoveChar::LineDown); },
             "k" if *zip_type == Character => { char_movement_evw.send(MoveChar::LineUp); },
+
             "h" => { zipper_movement_evw.send(MoveInstruction::Left); },
             "l" => { zipper_movement_evw.send(MoveInstruction::Right); },
             "j" => { zipper_movement_evw.send(MoveInstruction::Child(0)); },
@@ -196,16 +197,20 @@ fn move_char_up_down (
 
         match movement {
             MoveChar::LineUp => {
-                move_zipp_evw.send(MoveInstruction::Parent);
-                move_zipp_evw.send(MoveInstruction::Parent);
-                move_zipp_evw.send(MoveInstruction::Left);
-                move_line_evr.send(GoToChar(curr_pos, *line_zip_sibs.left.last().unwrap()));
+                if let Some(line_id) = line_zip_sibs.left.last() {
+                    move_zipp_evw.send(MoveInstruction::Parent);
+                    move_zipp_evw.send(MoveInstruction::Parent);
+                    move_zipp_evw.send(MoveInstruction::Left);
+                    move_line_evr.send(GoToChar(curr_pos, *line_id));
+                }
             },
             MoveChar::LineDown => {
-                move_zipp_evw.send(MoveInstruction::Parent);
-                move_zipp_evw.send(MoveInstruction::Parent);
-                move_zipp_evw.send(MoveInstruction::Right);
-                move_line_evr.send(GoToChar(curr_pos, *line_zip_sibs.right.front().unwrap()));
+                if let Some(line_id) = line_zip_sibs.right.front() {
+                    move_zipp_evw.send(MoveInstruction::Parent);
+                    move_zipp_evw.send(MoveInstruction::Parent);
+                    move_zipp_evw.send(MoveInstruction::Right);
+                    move_line_evr.send(GoToChar(curr_pos, *line_id));
+                }
             },
             _ => (),
         }
@@ -274,7 +279,7 @@ fn move_zipper(
         >,
     )>>
 ) {
-    let mut inst_events = Vec::with_capacity(3);
+    let mut inst_events = Vec::with_capacity(5);
     let (_, mut events, _, _, _) = state.get_mut(world);
     for i in events.read() { inst_events.push(*i) }
 
