@@ -7,7 +7,7 @@ use iyes_perf_ui::{PerfUiCompleteBundle, PerfUiPlugin};
 
 mod text_components;
 
-use text_components::{AppWindow, Document, DocumentPlugin, Line, Span};
+use text_components::{AppWindow, Document, DocumentPlugin, Line, Scroll, ScrollPosition, Span};
 
 #[derive(Component)]
 pub struct MainCamera;
@@ -45,10 +45,10 @@ fn main() {
                 .after(control),
             highlight_border,
             dehighlight_border,
-            which_zipper,
             despawn_zipper,
             move_zipper,
             goto_char.before(move_zipper),
+            keep_cursor_in_view
         ))
         .add_event::<MoveInstruction>()
         .add_event::<GoToChar>()
@@ -379,20 +379,6 @@ fn despawn_zipper(
     }
 }
 
-fn which_zipper(
-    new_focus: Query<&ZipperType, Added<CurrentZipper>>,
-) {
-    for zip_type in new_focus.iter() {
-        match zip_type {
-            ZipperType::Window => println!("Window"),
-            ZipperType::Document => println!("Document"),
-            ZipperType::Line => println!("Line"),
-            ZipperType::Span => println!("Span"),
-            ZipperType::Character => println!("Character"),
-        }
-    }
-}
-
 fn highlight_border(
     mut commands: Commands,
     new_focus: Query<Entity, Added<CurrentFocus>>,
@@ -412,6 +398,29 @@ fn dehighlight_border(
         commands
             .entity(id)
             .remove::<Outline>();
+    }
+}
+
+fn keep_cursor_in_view(
+    mut scroll_evw: EventWriter<Scroll>,
+    app_tree_q: Query<&GlobalTransform, With<Node>>,
+    curr_zipp_q: Query<&ZipperFocus, Added<CurrentZipper>>,
+    cam_q: Query<&OrthographicProjection>,
+) {
+    if curr_zipp_q.is_empty() { return }
+
+    let cam_proj = cam_q.single();
+    let g_translation = app_tree_q
+        .get(**curr_zipp_q.single()).unwrap()
+        .compute_transform()
+        .translation;
+
+    println!("curr_zipp x: {} y: {}", g_translation.x, g_translation.y);
+
+    if g_translation.y < cam_proj.area.min.y + 360. {
+        scroll_evw.send(Scroll(12.));
+    } else if g_translation.y > cam_proj.area.max.y + 360. {
+        scroll_evw.send(Scroll(-12.));
     }
 }
 

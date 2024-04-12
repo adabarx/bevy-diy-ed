@@ -7,9 +7,10 @@ use clap::Parser;
 pub struct DocumentPlugin;
 
 impl Plugin for DocumentPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup);
-        app.add_systems(Update, mouse_scroll);
+    fn build(&self, appl: &mut App) {
+        appl.add_systems(Startup, setup)
+            .add_systems(Update, (mouse_scroll, scroll))
+            .add_event::<Scroll>();
     }
 }
 
@@ -139,27 +140,37 @@ fn setup(mut commands: Commands, _asset_server: Res<AssetServer>) {
     });
 }
 
+#[derive(Event)]
+pub struct Scroll(pub f32);
+
+fn scroll(
+    mut scroll_evr: EventReader<Scroll>,
+    mut app_tree_q: Query<(&mut ScrollPosition, &mut Style, &Parent, &Node)>,
+    par_node_q: Query<&Node>,
+) {
+    for Scroll(dy) in scroll_evr.read() {
+        for (mut scroll_pos, mut style, par_id, node) in &mut app_tree_q {
+            let item_height = node.size().y;
+            let container_height = par_node_q.get(par_id.get()).unwrap().size().y;
+
+            let max_scroll = (item_height - container_height).max(0.);
+
+            **scroll_pos += dy;
+            **scroll_pos = scroll_pos.clamp(-max_scroll, 0.);
+            style.top = Val::Px(**scroll_pos);
+        }
+    }
+}
+
 fn mouse_scroll(
     mut scrollwheel_evr: EventReader<MouseWheel>,
-    mut text_q: Query<(&mut ScrollPosition, &mut Style, &Parent, &Node)>,
-    node_q: Query<&Node>,
+    mut scroll_evw: EventWriter<Scroll>,
 ) {
     for mouse_wheel_event in scrollwheel_evr.read() {
-        for (mut scrolling_list, mut style, parent, list_node) in &mut text_q {
-            let items_height = list_node.size().y;
-            let container_height = node_q.get(parent.get()).unwrap().size().y;
-
-            let max_scroll = (items_height - container_height).max(0.);
-
-            let dy = match mouse_wheel_event.unit {
-                MouseScrollUnit::Line => mouse_wheel_event.y * 20.,
-                MouseScrollUnit::Pixel => mouse_wheel_event.y,
-            };
-
-            **scrolling_list += dy;
-            **scrolling_list = scrolling_list.clamp(-max_scroll, 0.);
-            style.top = Val::Px(**scrolling_list);
-        }
+        scroll_evw.send(Scroll(match mouse_wheel_event.unit {
+            MouseScrollUnit::Line => mouse_wheel_event.y * 20.,
+            MouseScrollUnit::Pixel => mouse_wheel_event.y,
+        }));
     }
 }
 
