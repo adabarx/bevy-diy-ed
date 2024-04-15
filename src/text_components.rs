@@ -143,7 +143,7 @@ fn setup(mut commands: Commands, _asset_server: Res<AssetServer>) {
 #[derive(Event)]
 pub struct Scroll(pub f32);
 
-fn scroll(
+pub fn scroll(
     mut scroll_evr: EventReader<Scroll>,
     mut app_tree_q: Query<(&mut ScrollPosition, &mut Style, &Parent, &Node)>,
     par_node_q: Query<&Node>,

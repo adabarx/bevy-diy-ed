@@ -7,7 +7,7 @@ use iyes_perf_ui::{PerfUiCompleteBundle, PerfUiPlugin};
 
 mod text_components;
 
-use text_components::{AppWindow, Document, DocumentPlugin, Line, Scroll, ScrollPosition, Span};
+use text_components::{AppWindow, Document, DocumentPlugin, Line, Scroll, Span, scroll};
 
 #[derive(Component)]
 pub struct MainCamera;
@@ -48,7 +48,7 @@ fn main() {
             despawn_zipper,
             move_zipper,
             goto_char.before(move_zipper),
-            keep_cursor_in_view
+            keep_cursor_in_view.before(scroll)
         ))
         .add_event::<MoveInstruction>()
         .add_event::<GoToChar>()
@@ -225,7 +225,7 @@ fn goto_char(
     mut zipper_movement_evw: EventWriter<MoveInstruction>,
     main_q: Query<&Children, Or<(With<Line>, With<Span>)>>,
 ) {
-    for GoToChar(position, line_id) in char_evr.read() {
+    'event: for GoToChar(position, line_id) in char_evr.read() {
         let line_children = main_q.get(*line_id).unwrap();
         let mut curr_char_pos = 0_usize;
         let mut span_count = 0_usize;
@@ -237,13 +237,13 @@ fn goto_char(
                 for _ in span_children.iter() {
                     if curr_char_pos + char_count == *position {
                         zipper_movement_evw.send(MoveInstruction::Child(char_count));
-                        return;
+                        continue 'event;
                     }
                     char_count += 1;
                 }
                 zipper_movement_evw.send(MoveInstruction::Child(usize::MAX));
-                return;
-            }
+                continue 'event;
+        }
             curr_char_pos += span_children.len();
             span_count += 1;
         }
@@ -415,11 +415,10 @@ fn keep_cursor_in_view(
         .compute_transform()
         .translation;
 
-    println!("curr_zipp x: {} y: {}", g_translation.x, g_translation.y);
-
-    if g_translation.y < cam_proj.area.min.y + 360. {
+    let cam_offset = cam_proj.area.max.y;
+    if g_translation.y < cam_proj.area.min.y + cam_offset {
         scroll_evw.send(Scroll(12.));
-    } else if g_translation.y > cam_proj.area.max.y + 360. {
+    } else if g_translation.y > cam_proj.area.max.y + cam_offset {
         scroll_evw.send(Scroll(-12.));
     }
 }
