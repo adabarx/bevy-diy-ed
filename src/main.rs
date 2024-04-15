@@ -14,9 +14,9 @@ pub struct MainCamera;
 
 #[derive(States, Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum AppState {
-    #[default]
     Normal,
     Insert,
+    #[default]
     Travel,
 }
 
@@ -39,17 +39,21 @@ fn main() {
         .insert_resource(WinitSettings::desktop_app())
         .add_systems(Startup, (setup, setup_root_zipper).chain())
         .add_systems(Update, (
-            control,
+            control_normal.run_if(in_state(AppState::Normal)),
+            control_travel.run_if(in_state(AppState::Travel)),
+            control_insert.run_if(in_state(AppState::Insert)),
             (move_char_left_right, move_char_up_down)
                 .before(goto_char)
-                .after(control),
+                .after(control_normal),
             highlight_border,
             dehighlight_border,
             despawn_zipper,
             move_zipper,
             goto_char.before(move_zipper),
-            keep_cursor_in_view.before(scroll)
+            keep_cursor_in_view.before(scroll),
         ))
+        .add_systems(OnEnter(AppState::Normal), setup_char_zipper)
+        .add_systems(OnEnter(AppState::Insert), setup_char_zipper)
         .add_event::<MoveInstruction>()
         .add_event::<GoToChar>()
         .add_event::<MoveChar>()
@@ -91,7 +95,6 @@ pub struct ZipperFocus(Entity);
 #[derive(Component, Clone, Reflect)]
 pub struct ZipperSiblings { left: Vec<Entity>, right: VecDeque<Entity> }
 
-
 fn setup(mut commands: Commands) {
     commands.spawn((Camera2dBundle::default(), MainCamera));
     commands.spawn(PerfUiCompleteBundle::default());
@@ -109,30 +112,79 @@ fn setup_root_zipper(
     commands.entity(focus).insert(CurrentFocus);
 }
 
-fn control(
-    mut char_input_evr: EventReader<ReceivedCharacter>,
-    mut zipper_movement_evw: EventWriter<MoveInstruction>,
-    mut char_movement_evw: EventWriter<MoveChar>,
+fn setup_char_zipper(
+    mut move_inst_evw: EventWriter<MoveInstruction>,
+    mut next_state: ResMut<NextState<AppState>>,
     curr_zipp_q: Query<&ZipperType, With<CurrentZipper>>,
 ) {
-    use ZipperType::*;
+    match curr_zipp_q.single() {
+        ZipperType::Document => {
+            move_inst_evw.send(MoveInstruction::Child(0));
+            move_inst_evw.send(MoveInstruction::Child(0));
+            move_inst_evw.send(MoveInstruction::Child(0));
+        },
+        ZipperType::Line => {
+            move_inst_evw.send(MoveInstruction::Child(0));
+            move_inst_evw.send(MoveInstruction::Child(0));
+        },
+        ZipperType::Span => {
+            move_inst_evw.send(MoveInstruction::Child(0));
+        },
+        _ => next_state.set(AppState::Travel),
+    }
+}
+
+fn control_normal(
+    mut char_input_evr: EventReader<ReceivedCharacter>,
+    mut char_movement_evw: EventWriter<MoveChar>,
+    mut next_state: ResMut<NextState<AppState>>,
+    keys: Res<ButtonInput<KeyCode>>,
+) {
     for char in char_input_evr.read() {
-        let zip_type = curr_zipp_q.single();
         match char.char.as_str() {
-            "h" if *zip_type == Character => { char_movement_evw.send(MoveChar::Left); },
-            "l" if *zip_type == Character => { char_movement_evw.send(MoveChar::Right); },
-            "j" if *zip_type == Character => { char_movement_evw.send(MoveChar::LineDown); },
-            "k" if *zip_type == Character => { char_movement_evw.send(MoveChar::LineUp); },
+            "h" => { char_movement_evw.send(MoveChar::Left); },
+            "l" => { char_movement_evw.send(MoveChar::Right); },
+            "j" => { char_movement_evw.send(MoveChar::LineDown); },
+            "k" => { char_movement_evw.send(MoveChar::LineUp); },
+            "i" => next_state.set(AppState::Insert),
+            "t" if keys.pressed(KeyCode::ControlLeft) => next_state.set(AppState::Travel),
+            _ => ()
+        }
+    }
+}
 
-            "h" => { zipper_movement_evw.send(MoveInstruction::Left); },
-            "l" => { zipper_movement_evw.send(MoveInstruction::Right); },
-            "j" => { zipper_movement_evw.send(MoveInstruction::Child(0)); },
-            "k" => { zipper_movement_evw.send(MoveInstruction::Parent); },
+fn control_insert(
+    mut char_input_evr: EventReader<ReceivedCharacter>,
+    mut next_state: ResMut<NextState<AppState>>,
+    keys: Res<ButtonInput<KeyCode>>,
+) {
+    if keys.just_pressed(KeyCode::Escape) {
+        next_state.set(AppState::Normal);
+    }
+    for char in char_input_evr.read() {
+        match char.char.as_str() {
+            "t" if keys.pressed(KeyCode::ControlLeft) => next_state.set(AppState::Travel),
+            _ => ()
+        }
+    }
+}
 
-            "a" => { zipper_movement_evw.send(MoveInstruction::Left); },
-            "d" => { zipper_movement_evw.send(MoveInstruction::Right); },
-            "w" => { zipper_movement_evw.send(MoveInstruction::Child(0)); },
-            "s" => { zipper_movement_evw.send(MoveInstruction::Parent); },
+fn control_travel(
+    mut char_input_evr: EventReader<ReceivedCharacter>,
+    mut zipper_movement_evw: EventWriter<MoveInstruction>,
+    mut next_state: ResMut<NextState<AppState>>,
+    keys: Res<ButtonInput<KeyCode>>,
+) {
+    if keys.just_pressed(KeyCode::Escape) {
+        next_state.set(AppState::Normal);
+    }
+    for char in char_input_evr.read() {
+        match char.char.as_str() {
+            "h" | "a" => { zipper_movement_evw.send(MoveInstruction::Left); },
+            "l" | "d" => { zipper_movement_evw.send(MoveInstruction::Right); },
+            "j" | "w" => { zipper_movement_evw.send(MoveInstruction::Child(0)); },
+            "k" | "s" => { zipper_movement_evw.send(MoveInstruction::Parent); },
+            "i" => next_state.set(AppState::Insert),
             _ => ()
         }
     }
