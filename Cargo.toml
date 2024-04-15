@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.81"
 bevy = "0.13.1"
+bevy-inspector-egui = "0.23.4"
 bevy_text = "0.13.1"
 clap = { version = "4.5.4", features = ["derive"] }
 iyes_perf_ui = "0.2.3"

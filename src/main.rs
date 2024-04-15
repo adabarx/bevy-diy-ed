@@ -3,6 +3,7 @@ use std::{cmp::min, collections::VecDeque};
 use bevy::{
     ecs::system::SystemState, prelude::*, reflect::List, winit::WinitSettings
 };
+use bevy_inspector_egui::quick::StateInspectorPlugin;
 use iyes_perf_ui::{PerfUiCompleteBundle, PerfUiPlugin};
 
 mod text_components;
@@ -12,7 +13,7 @@ use text_components::{AppWindow, Document, DocumentPlugin, Line, Scroll, Span, s
 #[derive(Component)]
 pub struct MainCamera;
 
-#[derive(States, Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(States, Default, Clone, Copy, PartialEq, Eq, Hash, Debug, Reflect)]
 pub enum AppState {
     Normal,
     Insert,
@@ -34,6 +35,7 @@ fn main() {
         .add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin)
         .add_plugins(bevy::diagnostic::EntityCountDiagnosticsPlugin)
         .add_plugins(bevy::diagnostic::SystemInformationDiagnosticsPlugin)
+        .add_plugins(StateInspectorPlugin::<AppState>::default())
         .add_plugins(PerfUiPlugin)
         .add_plugins(DocumentPlugin)
         .insert_resource(WinitSettings::desktop_app())
@@ -130,6 +132,7 @@ fn setup_char_zipper(
         ZipperType::Span => {
             move_inst_evw.send(MoveInstruction::Child(0));
         },
+        ZipperType::Character => (),
         _ => next_state.set(AppState::Travel),
     }
 }
