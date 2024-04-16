@@ -10,6 +10,7 @@ impl Plugin for DocumentPlugin {
     fn build(&self, appl: &mut App) {
         appl.add_systems(Startup, setup)
             .add_systems(Update, (mouse_scroll, scroll))
+            .init_resource::<WorkingFilePath>()
             .add_event::<Scroll>();
     }
 }
@@ -53,8 +54,15 @@ pub struct WindowsBundle {
     node: NodeBundle,
 }
 
-fn setup(mut commands: Commands, _asset_server: Res<AssetServer>) {
+#[derive(Resource, Deref, Default)]
+pub struct WorkingFilePath(PathBuf);
+
+fn setup(
+    mut commands: Commands,
+    mut file_path: ResMut<WorkingFilePath>,
+) {
     let path = CLI::parse().path.expect("File Required");
+    *file_path = WorkingFilePath(path.clone());
     let content = fs::read_to_string(path.clone()).expect("File Doesn't Exist");
 
     commands.spawn(WindowsBundle {

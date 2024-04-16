@@ -1,14 +1,14 @@
-use std::{cmp::min, collections::VecDeque};
+use std::{cmp::min, collections::VecDeque, fs};
 
 use bevy::{
-    ecs::system::SystemState, input::{keyboard::KeyboardInput, ButtonState}, prelude::*, reflect::List, winit::WinitSettings
+    ecs::system::SystemState, input::{keyboard::KeyboardInput, ButtonState}, prelude::*, reflect::List, utils::dbg, winit::WinitSettings
 };
 use bevy_inspector_egui::quick::StateInspectorPlugin;
 use iyes_perf_ui::{PerfUiCompleteBundle, PerfUiPlugin};
 
 mod text_components;
 
-use text_components::{scroll, AppWindow, Character, Document, DocumentPlugin, Line, Scroll, Span};
+use text_components::{scroll, AppWindow, Character, Document, DocumentPlugin, Line, Scroll, Span, WorkingFilePath};
 
 #[derive(Component)]
 pub struct MainCamera;
@@ -53,6 +53,7 @@ fn main() {
             move_zipper,
             goto_char.before(move_zipper),
             keep_cursor_in_view.before(scroll),
+            save_to_file,
         ))
         .add_systems(OnEnter(AppState::Normal), setup_char_zipper)
         .add_systems(OnEnter(AppState::Insert), setup_char_zipper)
@@ -61,6 +62,7 @@ fn main() {
         .add_event::<MoveChar>()
         .add_event::<DespawnZipper>()
         .add_event::<InsertChar>()
+        .add_event::<Save>()
         .init_state::<AppState>()
         .run();
 }
@@ -138,9 +140,49 @@ fn setup_char_zipper(
     }
 }
 
+#[derive(Event)]
+pub struct Save;
+
+fn save_to_file(
+    mut save_evr: EventReader<Save>,
+    file_path: Res<WorkingFilePath>,
+    text_q: Query<&Text, With<Character>>,
+    doc_q: Query<&Children, With<Document>>,
+    content_q: Query<&Children, Or<(With<Line>, With<Span>)>>,
+) {
+    for _ in save_evr.read() {
+        println!("save");
+        let mut output = String::new();
+        let doc_children = doc_q.single();
+        for line_id in doc_children.iter() {
+            let line_children = content_q.get(*line_id).unwrap();
+            for span_id in line_children.iter() {
+                let span_children = content_q.get(*span_id).unwrap();
+                for ch_id in span_children.iter() {
+                    let character = text_q.get(*ch_id).unwrap();
+                    output.push_str(
+                        character
+                            .sections
+                            .iter()
+                            .fold(String::new(), |mut acc, s| {
+                                let ch = s.downcast_ref::<TextSection>().unwrap().value.as_str();
+                                acc.push_str(ch);
+                                acc
+                            })
+                            .as_str()
+                    )
+                }
+            }
+            output.push_str("\n");
+        }
+        fs::write(file_path.clone(), output).unwrap();
+    }
+}
+
 fn control_normal(
     mut char_input_evr: EventReader<ReceivedCharacter>,
     mut char_movement_evw: EventWriter<MoveChar>,
+    mut save_evw: EventWriter<Save>,
     mut next_state: ResMut<NextState<AppState>>,
     keys: Res<ButtonInput<KeyCode>>,
 ) {
@@ -152,6 +194,7 @@ fn control_normal(
             "k" => { char_movement_evw.send(MoveChar::LineUp); },
             "i" => next_state.set(AppState::Insert),
             "t" if keys.pressed(KeyCode::ControlLeft) => next_state.set(AppState::Travel),
+            "s" if keys.pressed(KeyCode::ControlLeft) => { save_evw.send(Save); },
             _ => ()
         }
     }
@@ -178,7 +221,6 @@ fn process_insert(
         let span_id = chars_q.get(**focus).unwrap();
         match input {
             InsertChar::Str(str) => {
-                println!("str");
                 let char_id = commands.spawn((
                     Character,
                     TextBundle::from_section(str, Default::default())
@@ -187,7 +229,6 @@ fn process_insert(
                 siblings.left.push(char_id);
             },
             InsertChar::Delete => {
-                println!("del");
                 if siblings.left.len() != 0 {
                     commands.entity(**span_id)
                         .remove_children(&[siblings.left.pop().unwrap()]);
@@ -202,7 +243,6 @@ fn process_insert(
                 }
             },
             InsertChar::ForwardDelete => {
-                println!("fowdel");
                 commands.entity(**span_id)
                     .remove_children(&[**focus]);
                 if siblings.right.len() != 0 {
@@ -218,6 +258,7 @@ fn process_insert(
 }
 
 fn control_insert(
+    mut save_evw: EventWriter<Save>,
     mut char_input_evr: EventReader<ReceivedCharacter>,
     mut keyb_input_evr: EventReader<KeyboardInput>,
     mut insert_evw: EventWriter<InsertChar>,
@@ -248,9 +289,12 @@ fn control_insert(
     }
 
     for char in char_input_evr.read() {
-        println!("insert {}", char.char.as_str());
-        if char.char.as_str() == "t" && control_pressed {
-            next_state.set(AppState::Travel);
+        if control_pressed {
+            match char.char.as_str() {
+                "t" => next_state.set(AppState::Travel),
+                "s" => { save_evw.send(Save); },
+                _ => (),
+            }
             return;
         }
         insert_evw.send(InsertChar::Str(char.char.to_string()));
@@ -259,6 +303,7 @@ fn control_insert(
 
 fn control_travel(
     mut char_input_evr: EventReader<ReceivedCharacter>,
+    mut save_evw: EventWriter<Save>,
     mut zipper_movement_evw: EventWriter<MoveInstruction>,
     mut next_state: ResMut<NextState<AppState>>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -268,6 +313,7 @@ fn control_travel(
     }
     for char in char_input_evr.read() {
         match char.char.as_str() {
+            "s" if keys.pressed(KeyCode::ControlLeft) => { save_evw.send(Save); },
             "h" | "a" => { zipper_movement_evw.send(MoveInstruction::Left); },
             "l" | "d" => { zipper_movement_evw.send(MoveInstruction::Right); },
             "j" | "w" => { zipper_movement_evw.send(MoveInstruction::Child(0)); },
