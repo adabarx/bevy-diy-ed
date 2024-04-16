@@ -1,7 +1,7 @@
 use std::{cmp::min, collections::VecDeque, fs};
 
 use bevy::{
-    ecs::system::SystemState, input::{keyboard::KeyboardInput, ButtonState}, prelude::*, reflect::List, utils::dbg, winit::WinitSettings
+    ecs::system::SystemState, input::{keyboard::KeyboardInput, ButtonState}, prelude::*, reflect::List, winit::WinitSettings
 };
 use bevy_inspector_egui::quick::StateInspectorPlugin;
 use iyes_perf_ui::{PerfUiCompleteBundle, PerfUiPlugin};
@@ -151,7 +151,6 @@ fn save_to_file(
     content_q: Query<&Children, Or<(With<Line>, With<Span>)>>,
 ) {
     for _ in save_evr.read() {
-        println!("save");
         let mut output = String::new();
         let doc_children = doc_q.single();
         for line_id in doc_children.iter() {
@@ -263,8 +262,8 @@ fn control_insert(
     mut keyb_input_evr: EventReader<KeyboardInput>,
     mut insert_evw: EventWriter<InsertChar>,
     mut next_state: ResMut<NextState<AppState>>,
+    keys: Res<ButtonInput<KeyCode>>,
 ) {
-    let mut control_pressed = false;
     for key in keyb_input_evr.read() {
         use KeyCode::*;
         use ButtonState::*;
@@ -281,15 +280,12 @@ fn control_insert(
                 insert_evw.send(InsertChar::Delete);
                 char_input_evr.clear();
             },
-            (ControlLeft, Pressed) => {
-                control_pressed = true;
-            },
             _ => (),
         }
     }
 
     for char in char_input_evr.read() {
-        if control_pressed {
+        if keys.pressed(KeyCode::ControlLeft) {
             match char.char.as_str() {
                 "t" => next_state.set(AppState::Travel),
                 "s" => { save_evw.send(Save); },
