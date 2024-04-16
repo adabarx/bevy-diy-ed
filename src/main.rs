@@ -1,14 +1,14 @@
 use std::{cmp::min, collections::VecDeque};
 
 use bevy::{
-    ecs::system::SystemState, prelude::*, reflect::List, winit::WinitSettings
+    ecs::system::SystemState, input::{keyboard::KeyboardInput, ButtonState}, prelude::*, reflect::List, winit::WinitSettings
 };
 use bevy_inspector_egui::quick::StateInspectorPlugin;
 use iyes_perf_ui::{PerfUiCompleteBundle, PerfUiPlugin};
 
 mod text_components;
 
-use text_components::{AppWindow, Document, DocumentPlugin, Line, Scroll, Span, scroll};
+use text_components::{scroll, AppWindow, Character, Document, DocumentPlugin, Line, Scroll, Span};
 
 #[derive(Component)]
 pub struct MainCamera;
@@ -43,7 +43,7 @@ fn main() {
         .add_systems(Update, (
             control_normal.run_if(in_state(AppState::Normal)),
             control_travel.run_if(in_state(AppState::Travel)),
-            control_insert.run_if(in_state(AppState::Insert)),
+            (control_insert, process_insert).run_if(in_state(AppState::Insert)),
             (move_char_left_right, move_char_up_down)
                 .before(goto_char)
                 .after(control_normal),
@@ -60,6 +60,7 @@ fn main() {
         .add_event::<GoToChar>()
         .add_event::<MoveChar>()
         .add_event::<DespawnZipper>()
+        .add_event::<InsertChar>()
         .init_state::<AppState>()
         .run();
 }
@@ -156,19 +157,103 @@ fn control_normal(
     }
 }
 
+#[derive(Event)]
+pub enum InsertChar{
+    Str(String),
+    Delete,
+    ForwardDelete
+}
+
+fn process_insert(
+    mut commands: Commands,
+    mut insert_evr: EventReader<InsertChar>,
+    chars_q: Query<&Parent, With<Character>>,
+    mut curr_zip_q: Query<(&ZipperType, &mut ZipperFocus, &mut ZipperSiblings), With<CurrentZipper>>,
+    mut move_inst_evw: EventWriter<MoveInstruction>,
+) {
+    for input in insert_evr.read() {
+        let (zipp_type, mut focus, mut siblings) = curr_zip_q.single_mut();
+        if *zipp_type != ZipperType::Character { return }
+        let curr_index = siblings.left.len();
+        let span_id = chars_q.get(**focus).unwrap();
+        match input {
+            InsertChar::Str(str) => {
+                println!("str");
+                let char_id = commands.spawn((
+                    Character,
+                    TextBundle::from_section(str, Default::default())
+                )).id();
+                commands.entity(**span_id).insert_children(curr_index, &[char_id]);
+                siblings.left.push(char_id);
+            },
+            InsertChar::Delete => {
+                println!("del");
+                if siblings.left.len() != 0 {
+                    commands.entity(**span_id)
+                        .remove_children(&[siblings.left.pop().unwrap()]);
+                } else {
+                    commands.entity(**span_id)
+                        .remove_children(&[**focus]);
+                    if siblings.right.len() != 0 {
+                        *focus = ZipperFocus(siblings.right.pop_front().unwrap());
+                    } else {
+                        move_inst_evw.send(MoveInstruction::Parent);
+                    }
+                }
+            },
+            InsertChar::ForwardDelete => {
+                println!("fowdel");
+                commands.entity(**span_id)
+                    .remove_children(&[**focus]);
+                if siblings.right.len() != 0 {
+                    *focus = ZipperFocus(siblings.right.pop_front().unwrap());
+                } else if siblings.left.len() != 0 {
+                    *focus = ZipperFocus(siblings.left.pop().unwrap());
+                } else {
+                    move_inst_evw.send(MoveInstruction::Parent);
+                }
+            },
+        }
+    }
+}
+
 fn control_insert(
     mut char_input_evr: EventReader<ReceivedCharacter>,
+    mut keyb_input_evr: EventReader<KeyboardInput>,
+    mut insert_evw: EventWriter<InsertChar>,
     mut next_state: ResMut<NextState<AppState>>,
-    keys: Res<ButtonInput<KeyCode>>,
 ) {
-    if keys.just_pressed(KeyCode::Escape) {
-        next_state.set(AppState::Normal);
-    }
-    for char in char_input_evr.read() {
-        match char.char.as_str() {
-            "t" if keys.pressed(KeyCode::ControlLeft) => next_state.set(AppState::Travel),
-            _ => ()
+    let mut control_pressed = false;
+    for key in keyb_input_evr.read() {
+        use KeyCode::*;
+        use ButtonState::*;
+        match (key.key_code, key.state) {
+            (Escape, Pressed) => {
+                next_state.set(AppState::Normal);
+                char_input_evr.clear();
+            }
+            (Delete, Pressed) => {
+                insert_evw.send(InsertChar::ForwardDelete);
+                char_input_evr.clear();
+            },
+            (Backspace, Pressed) => {
+                insert_evw.send(InsertChar::Delete);
+                char_input_evr.clear();
+            },
+            (ControlLeft, Pressed) => {
+                control_pressed = true;
+            },
+            _ => (),
         }
+    }
+
+    for char in char_input_evr.read() {
+        println!("insert {}", char.char.as_str());
+        if char.char.as_str() == "t" && control_pressed {
+            next_state.set(AppState::Travel);
+            return;
+        }
+        insert_evw.send(InsertChar::Str(char.char.to_string()));
     }
 }
 
